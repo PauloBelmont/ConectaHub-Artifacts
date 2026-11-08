@@ -1,0 +1,62 @@
+% Parte do material do minicurso "Escrita de Artigos Científicos com LaTeX" (Conecta Hub)
+% Exemplo 04 – Tabelas e figuras
+% Usa apenas recursos nativos (sem imagens externas), para compilar sem arquivos extras.
+
+\documentclass[12pt, a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[brazil]{babel}
+\usepackage{booktabs}                    % linhas de tabela profissionais (\toprule, \midrule, \bottomrule)
+\usepackage{graphicx}                    % inclusão de imagens (\includegraphics)
+\usepackage{tikz}                        % desenho vetorial simples
+
+\title{Tabelas e Figuras}
+\author{Seu Nome}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\section{Tabela}
+
+\begin{table}[h]
+    \centering
+    \caption{Desempenho de três algoritmos.}
+    \label{tab:desempenho}
+    \begin{tabular}{lcc}
+        \toprule
+        Algoritmo & Tempo (s) & Memória (MB) \\
+        \midrule
+        Alfa      & 1,20      & 35           \\
+        Beta      & 0,85      & 42           \\
+        Gama      & 2,10      & 28           \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+Na Tabela~\ref{tab:desempenho}, o algoritmo Beta é o mais rápido.
+
+\section{Figura}
+
+\begin{figure}[h]
+    \centering
+    \begin{tikzpicture}
+        \draw[->] (0,0) -- (4,0) node[right] {$x$};
+        \draw[->] (0,0) -- (0,3) node[above] {$y$};
+        \draw[thick, blue] (0,0) .. controls (1,2.5) .. (2.5,0.5) -- (3.5,2);
+    \end{tikzpicture}
+    \caption{Exemplo de figura desenhada com TikZ.}
+    \label{fig:exemplo}
+\end{figure}
+
+A Figura~\ref{fig:exemplo} mostra um desenho vetorial.
+
+\medskip
+Para usar uma imagem sua (PNG/JPG/PDF), coloque o arquivo na pasta e escreva:
+
+\begin{verbatim}
+\includegraphics[width=0.6\textwidth]{minha_imagem.png}
+\end{verbatim}
+
+\end{document}

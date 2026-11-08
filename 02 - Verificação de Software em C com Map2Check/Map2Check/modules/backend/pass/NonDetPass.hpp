@@ -1,0 +1,124 @@
+/**
+ * Copyright (C) 2014 - 2020 Map2Check tool
+ * This file is part of the Map2Check tool, and is made available under
+ * the terms of the GNU General Public License version 2.
+ *
+ * LLVM -> NCSA
+ *
+ * SPDX-License-Identifier: (GPL-2.0 AND NCSA)
+ **/
+
+#ifndef MODULES_BACKEND_PASS_NONDETPASS_HPP_
+#define MODULES_BACKEND_PASS_NONDETPASS_HPP_
+
+#include <llvm/IR/Constants.h>
+#include <llvm/IR/Function.h>
+#include <llvm/IR/IRBuilder.h>
+#include <llvm/IR/Instructions.h>
+#include <llvm/IR/Metadata.h>
+#include <llvm/IR/Module.h>
+#include <llvm/IR/PassManager.h>
+#include <llvm/Support/raw_ostream.h>
+
+#include <iostream>
+#include <sstream>
+#include <stdexcept>
+#include <string>
+#include <vector>
+
+#include <memory>
+
+#include "DebugInfo.hpp"
+#include "NonDetFunctions.hpp"
+
+using llvm::BasicBlock;
+using llvm::CallInst;
+using llvm::Function;
+using llvm::LLVMContext;
+using llvm::PreservedAnalyses;
+using llvm::Value;
+
+enum class NonDetType {
+  INTEGER,
+  UNSIGNED,
+  POINTER,
+  //  STRING,
+  LONG,
+  ASSUME,
+  USHORT,
+  SHORT,
+  ULONG,
+  CHAR,
+  BOOL,
+  UCHAR,
+  PCHAR,
+  SIZE_T,
+  LOFF_T,
+  SECTOR_T,
+  UINT,
+  CRAB_ASSUME,
+  DOUBLE,
+  FLOAT,
+  LONGLONG,
+  ULONGLONG,
+  U8,
+  U16,
+  U32,
+  MEMORY
+};
+
+namespace InstrumentNonDetS {
+#define INSTRUMENT_HEADER_HELPER(type) \
+  void instrumentNonDet##type(CallInst *callInst, LLVMContext *Ctx);
+}  // namespace InstrumentNonDetS
+
+struct NonDetPass : public llvm::PassInfoMixin<NonDetPass> {
+  PreservedAnalyses run(Function &F, llvm::FunctionAnalysisManager &AM);
+  static bool isRequired() { return true; }
+
+ protected:
+  void instrumentInstruction();
+  /**
+   * @brief Checks if current function is a non det call and instruments it
+   */
+  void runOnCallInstruction(CallInst *callInst, LLVMContext *Ctx);
+  Value *getFunctionNameValue() { return this->functionName; }
+
+ private:
+  void instrumentNonDet(NonDetType type, Function *calleeFunction);
+  INSTRUMENT_HEADER_HELPER(Integer)
+  INSTRUMENT_HEADER_HELPER(Unsigned)
+  INSTRUMENT_HEADER_HELPER(Char)
+  INSTRUMENT_HEADER_HELPER(Pointer)
+  INSTRUMENT_HEADER_HELPER(Long)
+  INSTRUMENT_HEADER_HELPER(Ushort)
+  INSTRUMENT_HEADER_HELPER(Short)
+  INSTRUMENT_HEADER_HELPER(Ulong)
+  INSTRUMENT_HEADER_HELPER(Bool)
+  INSTRUMENT_HEADER_HELPER(Uchar)
+  INSTRUMENT_HEADER_HELPER(Pchar)
+  INSTRUMENT_HEADER_HELPER(Size_t)
+  INSTRUMENT_HEADER_HELPER(Loff_t)
+  INSTRUMENT_HEADER_HELPER(Sector_t)
+  INSTRUMENT_HEADER_HELPER(Uint)
+  INSTRUMENT_HEADER_HELPER(Double)
+  INSTRUMENT_HEADER_HELPER(Float)
+  INSTRUMENT_HEADER_HELPER(Longlong)
+  INSTRUMENT_HEADER_HELPER(Ulonglong)
+  INSTRUMENT_HEADER_HELPER(U8)
+  INSTRUMENT_HEADER_HELPER(U16)
+  INSTRUMENT_HEADER_HELPER(U32)
+  void instrumentCrabAssume(CallInst *callInst, LLVMContext *Ctx);
+  std::unique_ptr<NonDetFunctions> nonDetFunctions;
+  Value *functionName = NULL;
+  BasicBlock::iterator currentInstruction;
+};
+
+class NonDetPassException : public std::runtime_error {
+ public:
+  explicit NonDetPassException(std::string message)
+      : std::runtime_error(message) {}
+  virtual const char *what() const throw();
+};
+
+#endif  // MODULES_BACKEND_PASS_NONDETPASS_HPP_

@@ -1,0 +1,210 @@
+/**
+ * Copyright (C) 2014 - 2019 Map2Check tool
+ * This file is part of the Map2Check tool, and is made available under
+ * the terms of the GNU General Public License version 2.
+ *
+ * SPDX-License-Identifier: (GPL-2.0)
+ *
+ **/
+
+#include "counter_example.hpp"
+
+#include "../test_suite/ktest_reader.hpp"
+
+#include <algorithm>
+#include <fstream>
+#include <iostream>
+#include <memory>
+#include <string>
+#include <utility>
+#include <vector>
+
+namespace Tools = Map2Check;
+// using namespace Map2Check;
+using Map2Check::CounterExample;
+using Map2Check::SourceCodeHelper;
+
+using std::ios;
+
+CounterExample::CounterExample(std::string path, bool no_source) {
+  this->noSource = no_source;
+  if (!no_source)
+    this->sourceCodeHelper = std::make_unique<Tools::SourceCodeHelper>(
+        Tools::SourceCodeHelper(path));
+
+  this->processKleeLog();
+  // Log::Debug("started reading list log");
+  this->processListLog();
+  this->processProperty();
+}
+
+void CounterExample::printCounterExample(bool printListLog) {
+  // std::sort(this->counterExampleRows.begin(),
+  // this->counterExampleRows.end());
+  Log::Info("Counter-example:\n");
+  int currentState = 0;
+  for (int i = 0; i < this->counterExampleRows.size(); i++) {
+    this->counterExampleRows[i]->setState(currentState);
+    currentState = this->counterExampleRows[i]->getState() + 1;
+    Log::Info(*this->counterExampleRows[i]);
+  }
+}
+
+void CounterExample::processProperty() {
+  Tools::CheckViolatedProperty violated;
+  int step = this->counterExampleRows.size();
+  int state = 0;
+  std::string path = violated.path_name;
+  std::unique_ptr<CounterExampleRow> row =
+      std::make_unique<CounterExampleProperty>(
+          step, state, path, 0, violated.propertyViolated, violated.line,
+          violated.function_name);
+  this->counterExampleRows.push_back(std::move(row));
+  this->property = violated.propertyViolated;
+}
+
+std::string CounterExample::getViolatedProperty() {
+  if (this->property == Tools::PropertyViolated::FALSE_FREE) {
+    return "FALSE-FREE";
+  }
+
+  if (this->property == Tools::PropertyViolated::TARGET_REACHED) {
+    return "TARGET-REACHED";
+  }
+
+  if (this->property == Tools::PropertyViolated::FALSE_DEREF) {
+    return "FALSE-DEREF";
+  }
+
+  if (this->property == Tools::PropertyViolated::FALSE_MEMTRACK) {
+    return "FALSE-MEMTRACK";
+  }
+
+  if (this->property == Tools::PropertyViolated::FALSE_MEMCLEANUP) {
+    return "FALSE-MEMCLEANUP";
+  }
+
+  if (this->property == Tools::PropertyViolated::NONE) {
+    return "TRUE";
+  }
+
+  if (this->property == Tools::PropertyViolated::UNKNOWN) {
+    return "UNKNOWN";
+  }
+
+  if (this->property == Tools::PropertyViolated::FALSE_OVERFLOW) {
+    return "OVERFLOW";
+  }
+
+  if (this->property == Tools::PropertyViolated::FALSE_DIVBYZERO) {
+    return "FALSE-DIVBYZERO";
+  }
+  // FIXME: Throw exception
+  return "";
+}
+
+// FIXME: Add Support to other non det type
+void CounterExample::processKleeLog() {
+  kleeLogRows = Tools::KleeLogHelper::getListLogFromCSV();
+
+  int ref = 0;
+  for (int i = 0; i < kleeLogRows.size(); i++) {
+    int step = std::stoi(kleeLogRows[i].step);
+    std::string path = noSource ? "" : this->sourceCodeHelper->getFilePath();
+
+    int state = 0;
+
+    int lineNumber = std::stoi(kleeLogRows[i].line);
+    std::string lineC = noSource ? ""
+                                 : this->sourceCodeHelper->substituteWithResult(
+                                       lineNumber, "__VERIFIER_nondet_int()",
+                                       kleeLogRows[i].value);
+
+    std::unique_ptr<CounterExampleRow> row =
+        std::make_unique<CounterExampleKleeRow>(kleeLogRows[i], step, state,
+                                                  path, ref, lineC);
+    // Log::Info(*row);
+
+    this->counterExampleRows.push_back(std::move(row));
+    ref++;
+  }
+}
+
+void CounterExample::processListLog() {
+  std::vector<Tools::ListLogRow> listLogRows =
+      Tools::ListLogHelper::getListLogFromCSV();
+  // TODO(hbgit): Add flag to map2check to print listlog
+  int ref = 0;
+  for (int i = 0; i < listLogRows.size(); i++) {
+    int step = std::stoi(listLogRows[i].step);
+    std::string path = noSource ? "" : this->sourceCodeHelper->getFilePath();
+    int state = 0;
+    int lineNumber = std::stoi(listLogRows[i].lineNumber);
+    Log::Debug("Line: " + listLogRows[i].lineNumber);
+    std::string lineC =
+        noSource ? "" : this->sourceCodeHelper->getLine(lineNumber);
+    std::unique_ptr<CounterExampleRow> row =
+        std::make_unique<CounterExampleListLogRow>(listLogRows[i], step,
+                                                     state, path, ref, lineC);
+    this->counterExampleRows.push_back(std::move(row));
+    ref++;
+  }
+}
+
+void CounterExample::generateTestCase() {
+  std::string file = this->sourceCodeHelper->getFilePath();
+  std::string testcase = file + ".testcase";
+
+  std::string command = "cp " + file + " " + testcase;
+
+  system(command.c_str());
+  std::ofstream sourceFile;
+  sourceFile.open(testcase, ios::out | ios::app);
+
+  sourceFile << "\n"
+             << "unsigned map2check_counter = 0;";
+  // The runtime's nondet log first, as it always was. Past 1024 reads the KLEE
+  // runtime writes no log (issue #75), and an aborted KLEE state writes none
+  // either; the violating .ktest carries the same vector in the same order,
+  // as for the Test-Comp suite (emitTestSuite). Without it the array came out
+  // empty -- not even valid C -- and the testcase replayed nothing (review of
+  // #73).
+  std::vector<std::string> values;
+  for (const Tools::KleeLogRow &row : this->kleeLogRows) {
+    values.push_back(row.value);
+  }
+  if (values.empty()) {
+    values = Map2Check::readViolatingKtest(Map2Check::kleeOutputDir);
+    if (!values.empty()) {
+      Log::Info("nondet log was empty; the testcase takes the violating input "
+                "vector from KLEE's test output (" +
+                std::to_string(values.size()) + " inputs)");
+    }
+  }
+
+  sourceFile << "\n"
+             << "long map2check_input_array[] = {";
+  for (size_t i = 0; i < values.size(); i++) {
+    sourceFile << values[i];
+    if (i + 1 != values.size()) {
+      sourceFile << ",";
+    }
+  }
+  // C has no empty initializer list.
+  if (values.empty()) sourceFile << "0";
+
+  sourceFile << "};\n";
+
+  sourceFile << "unsigned __VERIFIER_nondet_uint() { return "
+                "(unsigned)map2check_input_array[map2check_counter++]; }\n";
+  sourceFile << "int __VERIFIER_nondet_int() { return "
+                "(int)map2check_input_array[map2check_counter++]; }\n";
+  sourceFile << "char __VERIFIER_nondet_char() { return "
+                "(char)map2check_input_array[map2check_counter++]; }\n";
+  sourceFile << "void* __VERIFIER_nondet_void() { return "
+                "(void*)(long)map2check_input_array[map2check_counter++]; }\n";
+  sourceFile << "long __VERIFIER_nondet_long() { return "
+                "(long)map2check_input_array[map2check_counter++]; }\n";
+
+  sourceFile.close();
+}

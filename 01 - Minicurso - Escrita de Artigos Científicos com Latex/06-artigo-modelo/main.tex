@@ -1,0 +1,74 @@
+% Parte do material do minicurso "Escrita de Artigos Científicos com LaTeX" (Conecta Hub)
+% Exemplo 06 – Modelo de artigo científico
+% Estrutura típica: resumo, introdução, método, resultados, conclusão e referências.
+% Compile: pdflatex main.tex -> bibtex main -> pdflatex main.tex -> pdflatex main.tex
+
+\documentclass[12pt, a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[brazil]{babel}
+\usepackage{amsmath, amssymb}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage[backend=bibtex, style=numeric]{biblatex}
+\addbibresource{referencias.bib}   % copia de referencias.bib (pasta 05)
+\usepackage{hyperref}                    % links clicáveis (use por último)
+
+\title{Título do Artigo: Um Exemplo de Estrutura}
+\author{Autor Um \and Autora Dois}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+Este resumo apresenta, em poucas linhas, o problema, o método, os principais
+resultados e a conclusão do trabalho. Normalmente tem entre 150 e 250 palavras.
+\end{abstract}
+
+\noindent\textbf{Palavras-chave:} LaTeX; escrita científica; modelo.
+
+\section{Introdução}
+A introdução contextualiza o tema, apresenta o problema e enuncia a contribuição
+do trabalho \cite{lamport1994}. Termine a introdução indicando a organização do texto.
+
+\section{Trabalhos Relacionados}
+Aqui você discute trabalhos anteriores \cite{knuth1984, exemplo2020}, destacando
+o que já foi feito e qual é a lacuna que o seu trabalho preenche.
+
+\section{Método}
+Descreva o procedimento de forma reproduzível. Equações também fazem parte do método:
+\begin{equation}
+    y = \alpha x + \beta + \varepsilon
+    \label{eq:modelo}
+\end{equation}
+onde $\alpha$ e $\beta$ são parâmetros estimados e $\varepsilon$ é o erro.
+
+\section{Resultados}
+A Tabela~\ref{tab:resultados} resume os resultados obtidos.
+
+\begin{table}[h]
+    \centering
+    \caption{Resultados experimentais (valores ilustrativos).}
+    \label{tab:resultados}
+    \begin{tabular}{lcc}
+        \toprule
+        Método   & Precisão & Revocação \\
+        \midrule
+        Proposto & 0,92     & 0,88      \\
+        Base     & 0,85     & 0,81      \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+\section{Conclusão}
+O método proposto superou a linha de base nas métricas avaliadas. Trabalhos futuros
+incluem ampliar o conjunto de dados e comparar com outras abordagens.
+
+\section*{Agradecimentos}
+Opcional.
+
+\printbibliography[title={Referências}]
+
+\end{document}

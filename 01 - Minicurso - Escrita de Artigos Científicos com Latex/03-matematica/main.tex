@@ -1,0 +1,53 @@
+% Parte do material do minicurso "Escrita de Artigos Científicos com LaTeX" (Conecta Hub)
+% Exemplo 03 – Matemática
+
+\documentclass[12pt, a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[brazil]{babel}
+\usepackage{amsmath, amssymb}            % pacotes essenciais para matemática
+
+\title{Matemática no LaTeX}
+\author{Seu Nome}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\section{Equação inline}
+A equação do segundo grau é $ax^2 + bx + c = 0$, com $a \neq 0$.
+
+\section{Equação em destaque}
+Equação numerada:
+\begin{equation}
+    x = \frac{-b \pm \sqrt{b^2 - 4ac}}{2a}
+    \label{eq:bhaskara}
+\end{equation}
+
+Veja a equação~\eqref{eq:bhaskara} para a fórmula de Bhaskara.
+
+Equação sem numeração (\texttt{equation*}):
+\[
+    \int_0^1 x^2 \, dx = \frac{1}{3}
+\]
+
+\section{Várias linhas alinhadas}
+\begin{align}
+    (a + b)^2 &= a^2 + 2ab + b^2 \\
+    (a - b)^2 &= a^2 - 2ab + b^2
+\end{align}
+
+\section{Símbolos úteis}
+Letras gregas: $\alpha, \beta, \gamma, \Delta, \Omega$.
+
+Somatório e produtório: $\sum_{i=1}^{n} i = \frac{n(n+1)}{2}$ e $\prod_{i=1}^{n} i = n!$.
+
+Conjuntos: $x \in A$, $A \subseteq B$, $\mathbb{R}$, $\mathbb{N}$.
+
+Matrizes:
+\[
+    A = \begin{pmatrix} 1 & 2 \\ 3 & 4 \end{pmatrix}
+\]
+
+\end{document}

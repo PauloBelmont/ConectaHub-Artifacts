@@ -1,0 +1,117 @@
+/**
+ * Copyright (C) 2014 - 2020 Map2Check tool
+ * This file is part of the Map2Check tool, and is made available under
+ * the terms of the GNU General Public License version 2.
+ *
+ * LLVM -> NCSA
+ *
+ * SPDX-License-Identifier: (GPL-2.0 AND NCSA)
+ **/
+
+#ifndef MODULES_BACKEND_PASS_MEMORYTRACKPASS_HPP_
+#define MODULES_BACKEND_PASS_MEMORYTRACKPASS_HPP_
+
+#include <llvm/IR/Constants.h>
+#include <llvm/IR/Function.h>
+#include <llvm/IR/IRBuilder.h>
+#include <llvm/IR/Instructions.h>
+#include <llvm/IR/Metadata.h>
+#include <llvm/IR/Module.h>
+#include <llvm/IR/PassManager.h>
+#include <llvm/Support/raw_ostream.h>
+
+#include <iostream>
+#include <sstream>
+#include <stdexcept>
+#include <string>
+#include <vector>
+
+// using namespace llvm;
+using llvm::BasicBlock;
+using llvm::Constant;
+using llvm::FunctionCallee;
+using llvm::PointerType;
+using llvm::ConstantInt;
+using llvm::Function;
+using llvm::LLVMContext;
+using llvm::PreservedAnalyses;
+
+struct MemoryTrackPass : public llvm::PassInfoMixin<MemoryTrackPass> {
+  explicit MemoryTrackPass(bool SVCOMP = false, bool WasmMode = false)
+      : SVCOMP(SVCOMP), WasmModeActive(WasmMode) {}
+  PreservedAnalyses run(Function& F, llvm::FunctionAnalysisManager& AM);
+  static bool isRequired() { return true; }
+
+ private:
+  void instrumentPointer();
+  void instrumentMalloc();
+  void instrumentCalloc();
+  void instrumentRealloc();
+  void instrumentMemset();
+  void instrumentMemcpy();
+  /** Checks, before a printf-family call or puts/fputs, every string the call
+   * will read to its terminator (see the definition). */
+  void instrumentCStringArguments();
+  void instrumentPosixMemAllign();
+  void instrumentFree();
+  void instrumentInit();
+  void instrumentAlloca();
+  void instrumentArrayAlloca();
+  void instrumentNotStaticArrayAlloca();
+  void instrumentAllocation();
+  void instrumentFunctionAddress();
+  void instrumentFunctionArgumentAddress();
+  void runOnAllocaInstruction();
+  void runOnCallInstruction();
+  void runOnStoreInstruction();
+  void runOnLoadInstruction();
+  void switchCallInstruction();
+  void prepareMap2CheckInstructions();
+  void instrumentWasmBoundsCheck(llvm::Instruction* I, llvm::Value* ptr,
+                                   llvm::Type* accessType);
+  void instrumentWasmMalloc();
+  void instrumentWasmFree();
+  bool isWasmAllocator(llvm::StringRef name);
+  bool isWasmDeallocator(llvm::StringRef name);
+  // void addWitnessInfo(std::string info);
+  void getDebugInfo();
+  int getLineNumber();
+
+  bool SVCOMP;
+  bool WasmModeActive = false;
+  bool mainFunctionInitialized = false;
+  std::vector<Function*> functionsValues;
+  Function* currentFunction;
+  // DataLayout* currentDataLayout;
+  Function* mainFunction;
+  Function* calleeFunction;
+  BasicBlock::iterator currentInstruction;
+  BasicBlock::iterator lastInstructionMain;
+  FunctionCallee map2check_pointer;
+  FunctionCallee map2check_malloc;
+  FunctionCallee map2check_calloc;
+  FunctionCallee map2check_free;
+  FunctionCallee map2check_alloca;
+  FunctionCallee map2check_non_static_alloca;
+  FunctionCallee map2check_posix;
+  FunctionCallee map2check_load;
+  FunctionCallee map2check_check_cstring;
+  FunctionCallee map2check_check_deref;
+  FunctionCallee map2check_function;
+  FunctionCallee map2check_free_resolved_address;
+  FunctionCallee map2check_wasm_malloc;
+  FunctionCallee map2check_wasm_free;
+  FunctionCallee map2check_wasm_check_access;
+  ConstantInt* scope_value;
+  ConstantInt* line_value;
+  LLVMContext* Ctx;
+};
+
+class MemoryTrackPassException : public std::runtime_error {
+ public:
+  explicit MemoryTrackPassException(std::string message)
+      : std::runtime_error(message) {}
+  virtual const char* what() const throw();
+};
+
+#endif  // MODULES_BACKEND_PASS_MEMORYTRACKPASS_HPP_

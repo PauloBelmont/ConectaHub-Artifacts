@@ -1,0 +1,58 @@
+% Parte do material do minicurso "Escrita de Artigos Científicos com LaTeX" (Conecta Hub)
+% Exemplo 02 – Seções, listas e formatação de texto
+
+\documentclass[12pt, a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[brazil]{babel}
+
+\title{Seções e Formatação}
+\author{Seu Nome}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\section{Introdução}
+Seções são criadas com \texttt{\textbackslash section\{Título\}}.
+
+\subsection{Formatação de texto}
+Use \textbf{negrito}, \textit{itálico}, \underline{sublinhado} e \texttt{código monoespaçado}.
+
+Caracteres especiais precisam de escape: \% \& \$ \# \_ .
+
+Aspas em português: ``texto entre aspas'' (use duas crases e duas aspas simples).
+
+\subsection{Listas}
+
+Lista com marcadores:
+\begin{itemize}
+    \item Primeiro item;
+    \item Segundo item;
+    \begin{itemize}
+        \item Sub-item, com recuo.
+    \end{itemize}
+\end{itemize}
+
+Lista numerada:
+\begin{enumerate}
+    \item Passo um;
+    \item Passo dois;
+    \item Passo três.
+\end{enumerate}
+
+Lista de descrição:
+\begin{description}
+    \item[LaTeX] sistema de composição de textos;
+    \item[BibTeX] gerenciador de referências.
+\end{description}
+
+\section{Espaçamento e quebras}
+Use uma linha em branco para novo parágrafo.\\
+A barra dupla \texttt{\textbackslash\textbackslash} força uma quebra de linha.
+
+\section{Conclusão}
+Pronto: com seções e listas você já estrutura qualquer texto.
+
+\end{document}

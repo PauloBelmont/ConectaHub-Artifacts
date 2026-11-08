@@ -1,0 +1,28 @@
+% Parte do material do minicurso "Escrita de Artigos Científicos com LaTeX" (Conecta Hub)
+% Exemplo 05 – Referências com BibTeX
+% Compile: pdflatex main.tex -> bibtex main -> pdflatex main.tex -> pdflatex main.tex
+
+\documentclass[12pt, a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[brazil]{babel}
+\usepackage[backend=bibtex, style=numeric]{biblatex} % estilo numérico (troque por outro estilo se quiser)
+\addbibresource{referencias.bib}         % arquivo BibTeX com as referências
+
+\title{Referências Bibliográficas}
+\author{Seu Nome}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\section{Citações}
+Citação simples: \cite{knuth1984}.
+
+Vários autores ou fontes: \cite{knuth1984, lamport1994}.
+
+\section{Lista de referências}
+\printbibliography
+
+\end{document}

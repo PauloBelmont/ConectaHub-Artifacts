@@ -1,0 +1,605 @@
+############################################################
+# Map2Check CI — Build, Test, Static & Dynamic Analysis
+#
+# Runs on every push and pull request.
+# Installs LLVM 16 directly on ubuntu-22.04 runner.
+# Unit tests use -DSKIP_KLEE=ON -DSKIP_AFL_PLUS_PLUS=ON,
+# so the full Dockerfile.dev dependencies are not needed.
+#
+# Phase 1.5 — OpenSSF Best Practices Badge (Analysis section)
+############################################################
+name: CI
+
+on:
+  # Push cobre só as branches de integração. O filtro antigo listava 'feat-*'
+  # com hífen, que nunca casou com a convenção real (feat/castle-juliet-baseline,
+  # feat/testcomp-conformance) -- então nenhum push de branch era verificado, e
+  # todo run verde até aqui veio do gatilho pull_request.
+  #
+  # Branches de feature ficam cobertas pelo pull_request abaixo, e não por push,
+  # para não disparar dois runs idênticos a cada push numa branch com PR aberta.
+  push:
+    branches: [develop, main, master]
+  # Inclui feat/** como ALVO para que PRs empilhadas sejam verificadas. Sem isso
+  # uma PR cuja base é outra branch de feature não dispara nada -- a #56 abriu
+  # com um único check -- e os gates de regressão que ela própria adiciona nunca
+  # rodariam nela.
+  pull_request:
+    branches: [develop, main, master, 'feat/**']
+
+jobs:
+  # ===========================================================
+  # Job 1: Build + Unit Tests
+  # ===========================================================
+  build-and-test:
+    name: Build & Unit Tests
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install LLVM 16 + WABT
+        run: |
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc
+          echo "deb http://apt.llvm.org/jammy/ llvm-toolchain-jammy-16 main" | sudo tee /etc/apt/sources.list.d/llvm-16.list
+          sudo apt-get update
+          sudo apt-get install -y \
+            clang-16 llvm-16 llvm-16-dev libclang-16-dev \
+            cmake ninja-build libboost-all-dev zlib1g-dev
+          # WABT 1.0.41 (apt tem 1.0.27, API incompatível com WasmRuntimeStubs.c)
+          wget -q "https://github.com/WebAssembly/wabt/releases/download/1.0.41/wabt-1.0.41-linux-x64.tar.gz" -O /tmp/wabt.tar.gz
+          sudo tar xzf /tmp/wabt.tar.gz -C /opt
+          sudo ln -sf /opt/wabt-1.0.41/bin/wasm2c /usr/local/bin/wasm2c
+
+      - name: Configure CMake
+        run: |
+          mkdir -p build && cd build
+          cmake .. -G Ninja \
+            -DLLVM_DIR=/usr/lib/llvm-16/lib/cmake/llvm \
+            -DSKIP_AFL_PLUS_PLUS=ON \
+            -DSKIP_KLEE=ON \
+            -DENABLE_TEST=ON
+        env:
+          CC: /usr/bin/clang-16
+          CXX: /usr/bin/clang++-16
+
+      - name: Build
+        run: cd build && ninja
+
+      - name: Run Unit Tests
+        run: cd build && ctest --output-on-failure
+
+  # ===========================================================
+  # Job 2: Static Analysis (cppcheck + clang-tidy)
+  # ===========================================================
+  static-analysis:
+    name: Static Analysis
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install LLVM 16 + cppcheck + WABT
+        run: |
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc
+          echo "deb http://apt.llvm.org/jammy/ llvm-toolchain-jammy-16 main" | sudo tee /etc/apt/sources.list.d/llvm-16.list
+          sudo apt-get update
+          sudo apt-get install -y \
+            clang-16 clang-tidy-16 llvm-16 llvm-16-dev libclang-16-dev \
+            cmake ninja-build libboost-all-dev zlib1g-dev \
+            cppcheck
+          # WABT 1.0.41 (apt tem 1.0.27, API incompatível com WasmRuntimeStubs.c)
+          wget -q "https://github.com/WebAssembly/wabt/releases/download/1.0.41/wabt-1.0.41-linux-x64.tar.gz" -O /tmp/wabt.tar.gz
+          sudo tar xzf /tmp/wabt.tar.gz -C /opt
+          sudo ln -sf /opt/wabt-1.0.41/bin/wasm2c /usr/local/bin/wasm2c
+
+      - name: Generate compile_commands.json
+        run: |
+          mkdir -p build && cd build
+          cmake .. -G Ninja \
+            -DLLVM_DIR=/usr/lib/llvm-16/lib/cmake/llvm \
+            -DSKIP_AFL_PLUS_PLUS=ON \
+            -DSKIP_KLEE=ON \
+            -DENABLE_TEST=ON \
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+        env:
+          CC: /usr/bin/clang-16
+          CXX: /usr/bin/clang++-16
+
+      - name: Run cppcheck (C++)
+        run: |
+          cppcheck \
+            --enable=warning,portability \
+            --suppress=missingIncludeSystem \
+            --suppress=unknownMacro \
+            --suppress=unusedFunction \
+            --suppress=passedByValue \
+            --suppressions-list=.cppcheck-suppressions.txt \
+            --inline-suppr \
+            --error-exitcode=1 \
+            --std=c++17 \
+            --language=c++ \
+            -I modules/ \
+            modules/frontend/ \
+            tests/unit/
+
+      - name: Run cppcheck (C backend)
+        # Blocking since the backend was cleared of all findings
+        # (migration-schedule item 2.0.12 / OpenSSF static_analysis_fixed)
+        run: |
+          cppcheck \
+            --enable=warning,portability \
+            --suppress=missingIncludeSystem \
+            --suppress=unknownMacro \
+            --suppress=unusedFunction \
+            --suppressions-list=.cppcheck-suppressions.txt \
+            --inline-suppr \
+            --error-exitcode=1 \
+            --std=c11 \
+            --language=c \
+            -I modules/ \
+            modules/backend/library/
+
+      - name: Build (for clang-tidy)
+        run: cd build && ninja
+        env:
+          CC: /usr/bin/clang-16
+          CXX: /usr/bin/clang++-16
+
+      - name: Run clang-tidy
+        run: |
+          find modules/frontend -name '*.cpp' | \
+            xargs -I{} clang-tidy-16 -p build/ \
+              --config-file=.clang-tidy \
+              --warnings-as-errors='clang-analyzer-core.*,clang-analyzer-security.*,bugprone-use-after-move' \
+              {} 2>&1 || true
+
+  # ===========================================================
+  # Job 3: Dynamic Analysis (ASan + UBSan)
+  # ===========================================================
+  sanitizer-tests:
+    name: Sanitizer Tests (ASan + UBSan)
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install LLVM 16 + WABT
+        run: |
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc
+          echo "deb http://apt.llvm.org/jammy/ llvm-toolchain-jammy-16 main" | sudo tee /etc/apt/sources.list.d/llvm-16.list
+          sudo apt-get update
+          sudo apt-get install -y \
+            clang-16 llvm-16 llvm-16-dev libclang-16-dev \
+            cmake ninja-build libboost-all-dev zlib1g-dev
+          # WABT 1.0.41 (apt tem 1.0.27, API incompatível com WasmRuntimeStubs.c)
+          wget -q "https://github.com/WebAssembly/wabt/releases/download/1.0.41/wabt-1.0.41-linux-x64.tar.gz" -O /tmp/wabt.tar.gz
+          sudo tar xzf /tmp/wabt.tar.gz -C /opt
+          sudo ln -sf /opt/wabt-1.0.41/bin/wasm2c /usr/local/bin/wasm2c
+
+      - name: Configure CMake with Sanitizers
+        run: |
+          mkdir -p build && cd build
+          cmake .. -G Ninja \
+            -DLLVM_DIR=/usr/lib/llvm-16/lib/cmake/llvm \
+            -DSKIP_AFL_PLUS_PLUS=ON \
+            -DSKIP_KLEE=ON \
+            -DENABLE_TEST=ON \
+            -DMAP2CHECK_ENABLE_SANITIZERS=ON
+        env:
+          CC: /usr/bin/clang-16
+          CXX: /usr/bin/clang++-16
+
+      - name: Build with Sanitizers
+        run: cd build && ninja
+        env:
+          CC: /usr/bin/clang-16
+          CXX: /usr/bin/clang++-16
+
+      - name: Run Tests with ASan + UBSan
+        env:
+          # Strict mode (OpenSSF dynamic_analysis_fixed): any leak or UB
+          # fails the job. The findings that once justified relaxing these
+          # flags (BTree.c off-by-one, test leaks) are fixed.
+          ASAN_OPTIONS: "detect_leaks=1:halt_on_error=1:abort_on_error=1"
+          UBSAN_OPTIONS: "print_stacktrace=1:halt_on_error=1"
+        run: cd build && ctest --output-on-failure
+
+  # ===========================================================
+  # Job 4: WASM End-to-End Tests (Docker)
+  # ===========================================================
+  # Runs the full pipeline inside the published map2check-dev image,
+  # which already contains LLVM 16 + KLEE 3.1 + WABT + wasi-sdk.
+  # This catches regressions that unit tests miss (KLEE flags,
+  # isRequired, target function, wasm-rt linking, etc.).
+  e2e-wasm:
+    name: WASM E2E Tests (Docker)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    needs: [build-and-test]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
+          sudo docker image prune -a -f || true
+
+      - name: Pull map2check-dev image
+        run: docker pull ghcr.io/hbgit/map2check-dev:latest
+
+      - name: Build + install Map2Check in container
+        run: |
+          docker run --rm \
+            -u root \
+            -v "${{ github.workspace }}:/workspace" \
+            -w /workspace \
+            -e CC=/usr/bin/clang-16 \
+            -e CXX=/usr/bin/clang++-16 \
+            ghcr.io/hbgit/map2check-dev:latest bash -c '
+              # Install WABT + wasi-sdk (published image lacks them)
+              if [ ! -f /opt/wabt-1.0.41/include/wasm-rt.h ]; then
+                wget -q "https://github.com/WebAssembly/wabt/releases/download/1.0.41/wabt-1.0.41-linux-x64.tar.gz" -O /tmp/wabt.tar.gz
+                tar xzf /tmp/wabt.tar.gz -C /opt && rm /tmp/wabt.tar.gz
+                ln -sf /opt/wabt-1.0.41/bin/wasm2c /usr/local/bin/wasm2c
+              fi
+              if [ ! -d /opt/wasi-sdk-33.0-x86_64-linux ]; then
+                wget -q "https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-33/wasi-sdk-33.0-x86_64-linux.tar.gz" -O /tmp/wasi-sdk.tar.gz
+                tar xzf /tmp/wasi-sdk.tar.gz -C /opt && rm /tmp/wasi-sdk.tar.gz
+              fi
+
+              # Build and install to a release-style layout
+              rm -rf build_e2e install_e2e
+              mkdir -p build_e2e && cd build_e2e
+              cmake .. -G Ninja \
+                -DLLVM_DIR=/usr/lib/llvm-16/lib/cmake/llvm \
+                -DENABLE_TEST=ON \
+                -DMAP2CHECK_DYNAMIC_LINK=ON \
+                -DCMAKE_INSTALL_PREFIX=/workspace/install_e2e
+              ninja
+              ninja install
+
+              # Symlink KLEE runtime + compiler-rt files missing from install rules
+              mkdir -p /workspace/install_e2e/lib/klee
+              ln -sf /opt/klee/lib/klee/runtime /workspace/install_e2e/lib/klee/runtime
+              ln -sf /usr/lib/llvm-16/lib/clang /workspace/install_e2e/lib/clang
+            '
+
+      - name: Run WASM integration tests
+        run: |
+          docker run --rm \
+            -u root \
+            -v "${{ github.workspace }}:/workspace" \
+            -w /workspace \
+            -e MAP2CHECK_PATH=/workspace/install_e2e \
+            -e WASI_SDK_PATH=/opt/wasi-sdk-33.0-x86_64-linux \
+            ghcr.io/hbgit/map2check-dev:latest bash -c '
+              # Ensure WABT + wasi-sdk are available in this fresh container
+              if [ ! -f /opt/wabt-1.0.41/include/wasm-rt.h ]; then
+                wget -q "https://github.com/WebAssembly/wabt/releases/download/1.0.41/wabt-1.0.41-linux-x64.tar.gz" -O /tmp/wabt.tar.gz
+                tar xzf /tmp/wabt.tar.gz -C /opt && rm /tmp/wabt.tar.gz
+                ln -sf /opt/wabt-1.0.41/bin/wasm2c /usr/local/bin/wasm2c
+              fi
+              if [ ! -d /opt/wasi-sdk-33.0-x86_64-linux ]; then
+                wget -q "https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-33/wasi-sdk-33.0-x86_64-linux.tar.gz" -O /tmp/wasi-sdk.tar.gz
+                tar xzf /tmp/wasi-sdk.tar.gz -C /opt && rm /tmp/wasi-sdk.tar.gz
+              fi
+              bash tests/integration/test_wasm_pipeline.sh
+              bash tests/integration/test_wasm_entrypoint.sh
+            '
+
+  # ===========================================================
+  # Job 5: CASTLE Benchmark Regression Tests
+  # ===========================================================
+  # Verifies Map2Check against 5 CASTLE micro-benchmarks
+  # (CWE-415, 416, 476, 787) — memory safety regression suite.
+  castle-regression:
+    name: CASTLE Regression
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    needs: [build-and-test]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
+          sudo docker image prune -a -f || true
+
+      - name: Pull map2check-dev image
+        run: docker pull ghcr.io/hbgit/map2check-dev:latest
+
+      - name: Build + install Map2Check in container
+        run: |
+          docker run --rm \
+            -u root \
+            -v "${{ github.workspace }}:/workspace" \
+            -w /workspace \
+            -e CC=/usr/bin/clang-16 \
+            -e CXX=/usr/bin/clang++-16 \
+            ghcr.io/hbgit/map2check-dev:latest bash -c '
+              rm -rf build_castle_ci install_castle_ci
+              mkdir -p build_castle_ci && cd build_castle_ci
+              cmake .. -G Ninja \
+                -DLLVM_DIR=/usr/lib/llvm-16/lib/cmake/llvm \
+                -DENABLE_TEST=ON \
+                -DMAP2CHECK_DYNAMIC_LINK=ON \
+                -DCMAKE_INSTALL_PREFIX=/workspace/install_castle_ci
+              ninja
+              ninja install
+              mkdir -p /workspace/install_castle_ci/lib/klee
+              ln -sf /opt/klee/lib/klee/runtime /workspace/install_castle_ci/lib/klee/runtime
+              ln -sf /usr/lib/llvm-16/lib/clang /workspace/install_castle_ci/lib/clang
+            '
+
+      - name: Run regression tests
+        run: |
+          docker run --rm \
+            -u root \
+            -v "${{ github.workspace }}:/workspace" \
+            -w /workspace \
+            -e MAP2CHECK_PATH=/workspace/install_castle_ci \
+            ghcr.io/hbgit/map2check-dev:latest bash -c '
+              bash tests/integration/test_verdict_classifier.sh
+              bash tests/integration/test_juliet_sampling.sh
+              bash tests/integration/test_castle_regression.sh
+              bash tests/integration/test_main_argv.sh
+              bash tests/integration/test_modes.sh
+              bash tests/integration/test_add_invariants.sh
+              bash tests/integration/test_test_suite_emission.sh
+              bash tests/integration/test_target_coverage.sh
+              bash tests/integration/test_ktest_object_names.sh
+              bash tests/integration/test_testcomp_regressions.sh
+              bash tests/integration/test_fuzzer_leftovers.sh
+              bash tests/integration/test_exit_codes.sh
+              bash tests/integration/test_cwe_mode_mapping.sh
+            '
+
+  # ===========================================================
+  # Job: Invariants — o contrato do --add-invariants
+  # ===========================================================
+  # Roda o MESMO teste em qualquer estado em que a imagem esteja. Enquanto a
+  # imagem publicada não trouxer o Clam, ele afirma que a flag falha alto
+  # (issue #54). Quando a imagem passar a trazê-lo, o mesmo teste afirma que a
+  # flag tem sucesso E injeta verifier.assume. A linha CAPABILITY no log diz
+  # qual contrato foi verificado, então a volta da capacidade fica visível em
+  # vez de inferida.
+  #
+  # Nenhum check vermelho é estacionado de propósito: um check que se espera
+  # vermelho passa a ser ignorado, e aí ninguém percebe o dia em que fica verde.
+  invariants-clam:
+    name: Invariants (Clam)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 25
+    needs: [build-and-test]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
+          sudo docker image prune -a -f || true
+
+      - name: Pull map2check-dev image
+        run: docker pull ghcr.io/hbgit/map2check-dev:latest
+
+      - name: Build with -DENABLE_CLAM=ON
+        run: |
+          docker run --rm \
+            -u root \
+            -v "${{ github.workspace }}:/workspace" \
+            -w /workspace \
+            -e CC=/usr/bin/clang-16 \
+            -e CXX=/usr/bin/clang++-16 \
+            ghcr.io/hbgit/map2check-dev:latest bash -c '
+              rm -rf build_clam_ci install_clam_ci
+              mkdir -p build_clam_ci && cd build_clam_ci
+              cmake .. -G Ninja \
+                -DLLVM_DIR=/usr/lib/llvm-16/lib/cmake/llvm \
+                -DENABLE_CLAM=ON \
+                -DMAP2CHECK_DYNAMIC_LINK=ON \
+                -DCMAKE_INSTALL_PREFIX=/workspace/install_clam_ci
+              ninja
+              ninja install
+              mkdir -p /workspace/install_clam_ci/lib/klee
+              ln -sf /opt/klee/lib/klee/runtime /workspace/install_clam_ci/lib/klee/runtime
+              ln -sf /usr/lib/llvm-16/lib/clang /workspace/install_clam_ci/lib/clang
+            '
+
+      - name: Assert the --add-invariants contract
+        run: |
+          docker run --rm \
+            -u root \
+            -v "${{ github.workspace }}:/workspace" \
+            -w /workspace \
+            -e MAP2CHECK_PATH=/workspace/install_clam_ci \
+            ghcr.io/hbgit/map2check-dev:latest bash -c '
+              bash tests/integration/test_add_invariants.sh
+            '
+
+  # ===========================================================
+  # Job: Test-Comp conformance — o validador oficial
+  # ===========================================================
+  # Afirma que uma suíte emitida REPRODUZ o bug, que é o que a competição
+  # pontua. A validade estrutural do XML é afirmada à parte, pelo
+  # test_test_suite_emission.sh no job do CASTLE — uma suíte pode ser
+  # perfeitamente bem formada e valer zero ponto.
+  #
+  # Note que o TestCov sai com código 0 tanto quando cobre quanto quando não
+  # cobre; o veredito está na linha "Result:". Ver
+  # tests/testcomp/NOTES-testcov-output.md.
+  testcov-gate:
+    name: Test-Comp Validation (TestCov)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 25
+    needs: [build-and-test]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
+          sudo docker image prune -a -f || true
+
+      - name: Pull map2check-dev image
+        run: docker pull ghcr.io/hbgit/map2check-dev:latest
+
+      - name: Build + install Map2Check in container
+        run: |
+          docker run --rm \
+            -u root \
+            -v "${{ github.workspace }}:/workspace" \
+            -w /workspace \
+            -e CC=/usr/bin/clang-16 \
+            -e CXX=/usr/bin/clang++-16 \
+            ghcr.io/hbgit/map2check-dev:latest bash -c '
+              rm -rf build_testcov_ci install_testcov_ci
+              mkdir -p build_testcov_ci && cd build_testcov_ci
+              cmake .. -G Ninja \
+                -DLLVM_DIR=/usr/lib/llvm-16/lib/cmake/llvm \
+                -DMAP2CHECK_DYNAMIC_LINK=ON \
+                -DCMAKE_INSTALL_PREFIX=/workspace/install_testcov_ci
+              ninja
+              ninja install
+              mkdir -p /workspace/install_testcov_ci/lib/klee
+              ln -sf /opt/klee/lib/klee/runtime /workspace/install_testcov_ci/lib/klee/runtime
+              ln -sf /usr/lib/llvm-16/lib/clang /workspace/install_testcov_ci/lib/clang
+            '
+
+      - name: Run TestCov over the conformance corpus
+        run: |
+          docker run --rm \
+            -u root \
+            -v "${{ github.workspace }}:/workspace" \
+            -w /workspace \
+            -e MAP2CHECK_PATH=/workspace/install_testcov_ci \
+            -e KEEP_WORK=1 \
+            ghcr.io/hbgit/map2check-dev:latest bash -c '
+              # zip for the suite archive, gcc/lcov for coverage measurement.
+              apt-get update -qq
+              apt-get install -y -qq python3-pip zip gcc lcov
+              # Not --quiet, and checked right here: when the install leaves no
+              # testcov on PATH, the tests below only say "not installed",
+              # with the reason hidden.
+              pip3 install testcov 2>&1 | tail -20
+              command -v testcov && pip3 show testcov | head -2 \
+                || { echo "FATAL: pip3 install testcov left no testcov on PATH"; pip3 list 2>/dev/null | grep -iE "testcov|benchexec|tsbuilder"; ls -la /usr/local/bin | head -30; exit 2; }
+              # The tool-info module is what BenchExec loads on competition
+              # infrastructure. Nothing else here exercises it, and a wrong one
+              # only shows up days after submission as every task erroring out.
+              python3 tests/integration/test_benchexec_toolinfo.py
+              # The wrapper turns core dumps off: under BenchExec a core lands
+              # in a tmpfs that counts toward the memory limit of the run.
+              bash tests/integration/test_wrapper_core_dumps.sh
+              # Cover-Branches: the other competition category, and the one
+              # whose suite has more than one test case. Validated by TestCov,
+              # not by inspecting the XML -- only the validator can say whether
+              # the branches are actually exercised.
+              MAP2CHECK_PATH=/workspace/install_testcov_ci \
+                bash tests/integration/test_cover_branches.sh
+              bash tests/testcomp/run_testcov_suite.sh
+            '
+
+  # ===========================================================
+  # Job 6: Dynamic Analysis — Valgrind memcheck (OpenSSF)
+  # ===========================================================
+  # Build ISOLADO e SEM sanitizers: a shadow memory do ASan/UBSan
+  # conflita com a VM do Valgrind. Debug + DWARF-4 para stacks
+  # legíveis (Valgrind 3.18 não lê bem o DWARF-5 do clang-16).
+  valgrind-memcheck:
+    name: Valgrind Memcheck (ctest)
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install LLVM 16 + Valgrind + WABT
+        run: |
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc
+          echo "deb http://apt.llvm.org/jammy/ llvm-toolchain-jammy-16 main" | sudo tee /etc/apt/sources.list.d/llvm-16.list
+          sudo apt-get update
+          sudo apt-get install -y \
+            clang-16 llvm-16 llvm-16-dev libclang-16-dev \
+            cmake ninja-build libboost-all-dev zlib1g-dev \
+            valgrind
+          # WABT 1.0.41 (apt tem 1.0.27, API incompatível com WasmRuntimeStubs.c)
+          wget -q "https://github.com/WebAssembly/wabt/releases/download/1.0.41/wabt-1.0.41-linux-x64.tar.gz" -O /tmp/wabt.tar.gz
+          sudo tar xzf /tmp/wabt.tar.gz -C /opt
+          sudo ln -sf /opt/wabt-1.0.41/bin/wasm2c /usr/local/bin/wasm2c
+
+      - name: Configure CMake (Debug, sem sanitizers)
+        run: |
+          mkdir -p build && cd build
+          cmake .. -G Ninja \
+            -DLLVM_DIR=/usr/lib/llvm-16/lib/cmake/llvm \
+            -DSKIP_AFL_PLUS_PLUS=ON \
+            -DSKIP_KLEE=ON \
+            -DENABLE_TEST=ON \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_C_FLAGS="-gdwarf-4" \
+            -DCMAKE_CXX_FLAGS="-gdwarf-4" \
+            -DMEMORYCHECK_COMMAND=/usr/bin/valgrind \
+            -DMEMORYCHECK_SUPPRESSIONS_FILE="${{ github.workspace }}/valgrind.supp" \
+            -DMEMORYCHECK_COMMAND_OPTIONS="--tool=memcheck --leak-check=full --show-leak-kinds=all --errors-for-leak-kinds=definite --track-origins=yes --num-callers=40 --error-exitcode=1 --gen-suppressions=all"
+        env:
+          CC: /usr/bin/clang-16
+          CXX: /usr/bin/clang++-16
+
+      - name: Build
+        run: cd build && ninja
+
+      - name: Run ctest under Valgrind (memcheck)
+        run: cd build && ctest -T memcheck --output-on-failure
+
+      - name: Enforce zero memcheck defects
+        # Rede de segurança além do --error-exitcode=1: falha se qualquer
+        # log do memcheck registrar erros ou "definitely lost".
+        run: |
+          cd build
+          shopt -s nullglob
+          defects=0
+          for log in Testing/Temporary/MemoryChecker.*.log; do
+            if grep -qE "ERROR SUMMARY: [1-9][0-9]* errors|definitely lost: [1-9]" "$log"; then
+              echo "::error::Valgrind encontrou defeitos em $log"
+              cat "$log"
+              defects=1
+            fi
+          done
+          exit $defects
+
+      - name: Upload memcheck logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: valgrind-memcheck-logs
+          path: build/Testing/Temporary/MemoryChecker.*.log
+          if-no-files-found: ignore

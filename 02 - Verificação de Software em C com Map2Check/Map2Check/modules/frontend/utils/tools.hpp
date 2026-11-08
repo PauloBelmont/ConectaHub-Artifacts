@@ -1,0 +1,491 @@
+/**
+ * Copyright (C) 2014 - 2019 Map2Check tool
+ * This file is part of the Map2Check tool, and is made available under
+ * the terms of the GNU General Public License version 2.
+ *
+ * BOOST     -> BSL-1.0
+ *
+ * SPDX-License-Identifier: (GPL-2.0 AND BSL-1.0)
+ **/
+
+#ifndef MODULES_FRONTEND_UTILS_TOOLS_HPP_
+#define MODULES_FRONTEND_UTILS_TOOLS_HPP_
+
+#include <algorithm>  // copy
+#include <cstdlib>    // getenv
+#include <fstream>    // fstream
+#include <iostream>   // cout, endl
+#include <iterator>   // ostream_operator
+#include <regex>
+#include <sstream>
+#include <string>
+#include <vector>
+
+using std::ostringstream;
+using std::string;
+using std::vector;
+
+/**
+ * Namespace for all Map2Check Paths and Helpers
+ */
+namespace Map2Check {
+/** Path to ktest-tool binary (from KLEE) */
+// const string ktestBinary("${MAP2CHECK_PATH}/bin/ktest-tool");
+constexpr char const* ktestBinary = "${MAP2CHECK_PATH}/bin/ktest-tool";
+/** Path to clang binary (from llvm) */
+constexpr char const* clangBinary = "${MAP2CHECK_PATH}/bin/clang";
+/** Default Clam installation root, used when CLAM_DIR is not set. */
+constexpr char const* clamDefaultRoot = "/opt/clam";
+
+/** Absolute path to the Clam driver, the abstract-interpretation invariant
+ * generator. Clam is the current name of crab-llvm: the project was renamed,
+ * not abandoned. It installs outside the Map2Check prefix because it is an
+ * independent tool with its own LLVM-versioned build, so it keys off CLAM_DIR
+ * rather than MAP2CHECK_PATH.
+ *
+ * Resolved in C++ rather than left as a "${CLAM_DIR}" string for the shell to
+ * expand, so that the availability check and the command that gets run cannot
+ * disagree about where Clam is -- with shell expansion an unset CLAM_DIR
+ * silently becomes "/bin/clam.py" while the check looks at the default root. */
+inline std::string clamBinary() {
+  const char* dir = getenv("CLAM_DIR");
+  return (dir != nullptr ? std::string(dir) : std::string(clamDefaultRoot)) +
+         "/bin/clam.py";
+}
+/** Path to clang include folder (usually
+ * $(PATH_TO_CLANG)/lib/clang/$(LLVM_VERSION)/include) */
+constexpr char const* clangIncludeFolder = "${MAP2CHECK_PATH}/include/";
+/** Path to generated list log file (check MemoryUtils implementation) */
+constexpr char const* listLogCSV = "list_log.csv";
+/** Path to klee binary */
+constexpr char const* kleeBinary = "${MAP2CHECK_PATH}/bin/klee";
+/** Default root of the AFL++ install (Dockerfile.dev section 7). */
+constexpr char const* aflDefaultRoot = "/usr/local";
+/** Path to the afl-clang-fast wrapper (symlink to afl-cc), overridable.
+ *
+ * Resolved like the slicer and the invariant generator: an environment
+ * override first, a documented default second. AFL++ is a subprocess tool,
+ * invoked by caller.cpp at run time, so it is not copied into MAP2CHECK_PATH
+ * the way clang and klee are.
+ *
+ * MAP2CHECK_AFL_CC, not AFL_CC: AFL_CC is AFL++'s own variable for the real
+ * compiler afl-cc wraps, so reusing it would either recurse afl-clang-fast into
+ * itself or silently build the fuzzer uninstrumented. */
+inline std::string aflClangFastBinary() {
+  const char* override_path = getenv("MAP2CHECK_AFL_CC");
+  if (override_path != nullptr) return std::string(override_path);
+  return std::string(aflDefaultRoot) + "/bin/afl-clang-fast";
+}
+/** Path to the afl-fuzz binary, overridable with MAP2CHECK_AFL_FUZZ. */
+inline std::string aflFuzzBinary() {
+  const char* override_path = getenv("MAP2CHECK_AFL_FUZZ");
+  if (override_path != nullptr) return std::string(override_path);
+  return std::string(aflDefaultRoot) + "/bin/afl-fuzz";
+}
+/** Default root of the sbt-slicer install (Dockerfile.dev section 7c). */
+constexpr char const* slicerDefaultRoot = "/opt/sbt-slicer";
+/** Path to the sbt-slicer binary, overridable with SBT_SLICER.
+ *
+ * Resolved like the invariant generator: an environment override first, a
+ * documented default second, and the caller checks the file exists before
+ * relying on it -- a missing slicer must refuse the run, not silently analyse
+ * the unsliced program (issue #54's failure mode). */
+inline std::string slicerBinary() {
+  const char* override_path = getenv("SBT_SLICER");
+  if (override_path != nullptr) return std::string(override_path);
+  return std::string(slicerDefaultRoot) + "/bin/sbt-slicer";
+}
+/** Seconds granted between SIGTERM and SIGKILL when a backend overruns its
+ * slice (`timeout -k`). Both KLEE and AFL++ catch SIGTERM to shut down
+ * gracefully, and both can miss it while wedged -- KLEE inside the solver,
+ * AFL++ inside a hung target. Without the escalation `timeout` waits
+ * forever on a child that will not die and the whole run hangs past its
+ * budget. Long enough for a real graceful exit, short enough not to distort
+ * the budget. */
+constexpr int killGracePeriod = 10;
+/** Path to generated klee log file (check MemoryUtils implementation) */
+constexpr char const* kleeLogCSV = "klee_log.csv";
+/** KLEE's own output directory, relative to the scratch directory the run
+ * executes in. It is a symlink KLEE maintains to the latest klee-out-N, and it
+ * holds one testNNNNNN.ktest per explored path -- the input vectors a
+ * Cover-Branches suite is built from. */
+constexpr char const* kleeOutputDir = "klee-last";
+/** Path to generated Correctness log file (check MemoryUtils implementation) */
+constexpr char const* stateTrueLogCSV = "automata_list_log.st";
+/** Path to generated Correctness log file (check MemoryUtils implementation) */
+constexpr char const* trackBBLogCSV = "track_bb_log.st";
+/** Path to generated map2check_property file (check MemoryUtils implementation)
+ */
+constexpr char const* propertyViolationFile = "map2check_property";
+/** Path to generated klee results (it is created where klee is called) */
+constexpr char const* kleeResultFolder = "./klee-last";
+/** Path to opt binary (from llvm) */
+constexpr char const* optBinary = "${MAP2CHECK_PATH}/bin/opt";
+/** Path to llvm-link binary (from llvm) */
+constexpr char const* llvmLinkBinary = "${MAP2CHECK_PATH}/bin/llvm-link";
+
+/** Represents what kind of property was violated */
+enum class PropertyViolated {
+  FALSE_OVERFLOW,
+  FALSE_DIVBYZERO,
+  TARGET_REACHED,
+  FALSE_FREE,
+  FALSE_DEREF,
+  FALSE_MEMTRACK,
+  FALSE_MEMCLEANUP,
+  UNKNOWN,
+  NONE,
+  ASSERT
+};
+
+/** Class used to check violated property */
+struct CheckViolatedProperty {
+  /** Current violated property.
+   *
+   * Defaulted, and the default matters more than it looks. The constructor
+   * assigns this on several paths but NOT when map2check_property exists and
+   * is empty, nor when it holds a line the parser does not recognise -- the
+   * `else` that would have caught that is commented out. Both cases used to
+   * leave the field holding whatever was on the stack, and that value decided
+   * the tool's verdict.
+   *
+   * It is reachable: a KLEE state that aborts early creates the file without
+   * writing a verdict into it. Observed as the same program answering FAILED,
+   * SUCCEEDED and nothing across three runs, and as the ERROR/UNKNOWN churn
+   * that shows up in every baseline comparison.
+   *
+   * UNKNOWN is the honest default: no readable verdict means the tool did not
+   * decide, which is exactly what the missing-file path already reports. */
+  PropertyViolated propertyViolated = PropertyViolated::UNKNOWN;
+  /** Line where property was violated */
+  unsigned line = 0;
+  /** Name of the function where the property was violated */
+  string function_name;
+  string path_name;
+  /**
+   * Reads file and initializes the object
+   * @param path File describing the property
+   */
+  explicit CheckViolatedProperty(std::string path);
+
+  // operator std::string() const {
+  //     std::ostringstream cnvt;
+  //     cnvt.str("");
+  //     // cnvt <<"Function: " << this->function_name;
+  //     switch(this->propertyViolated) {
+  //       case(PropertyViolated::FALSE_FREE):
+  //         cnvt << "FALSE-FREE: Operand of free must have zero pointer
+  //         offset"; break;
+  //       case(PropertyViolated::TARGET_REACHED):
+  //         //TODO(hbgit): Add message for target reached
+  //         cnvt << "FALSE: Target Reached";
+  //         break;
+  //       case(PropertyViolated::NONE) {
+  //         cnvt << "TRUE";
+  //         break;
+  //       }
+  //     }
+  //     return cnvt.str();
+  // }
+
+  /**
+   * Reads default file and initializes the object
+   */
+  CheckViolatedProperty() : CheckViolatedProperty(propertyViolationFile) {}
+};
+
+/** Helper class to manipulate and transform code based on a C source file */
+class SourceCodeHelper {
+ public:
+  /**
+   * Reads all lines from a C source file and adds to a vector structure
+   * @param  c_src Path to C file
+   */
+  explicit SourceCodeHelper(std::string pathToCSource);
+
+  operator std::string() const {
+    std::ostringstream cnvt;
+    cnvt.str("");
+    cnvt << "\n**** C SOURCE ****\n";
+    for (unsigned i = 0; i < this->cFileLines.size(); i++) {
+      cnvt << "\tLine " << i << ": " << this->cFileLines[i] << "\n";
+    }
+    return cnvt.str();
+  }
+
+  /**
+   * Return line from c_file
+   * @param  line line to be given
+   * @return      Returns a string representing the line of the C file
+   */
+  std::string getLine(unsigned line);
+
+  std::string getFilePath();
+  std::string substituteWithResult(int line, std::string old_token,
+                                   std::string result);
+  // void changeTokenFromLine(int line, std::string old_token, std::string
+  // new_token);
+ private:
+  std::string path;
+  std::vector<std::string> cFileLines;
+};
+
+/** The type column of klee_log.csv: enum NONDET_TYPE of the runtime
+ * (Map2CheckTypes.h), in the same order, so a row's number casts to it.
+ * UNKNOWN is any other number. */
+enum class KleeLogType {
+  INTEGER,
+  CHAR,
+  POINTER,
+  USHORT,
+  LONG,
+  UNSIGNED,
+  ULONG,
+  BOOL,
+  UCHAR,
+  PCHAR,
+  SIZE_T,
+  LOFF_T,
+  SECTOR_T,
+  UINT,
+  SHORT,
+  DOUBLE,
+  FLOAT,
+  LONGLONG,
+  ULONGLONG,
+  U8,
+  U16,
+  U32,
+  MEMORY_BYTE,
+  UNKNOWN
+};
+
+/** The KleeLogType of a type number of klee_log.csv. */
+KleeLogType kleeLogTypeFromId(int id);
+
+struct KleeLogRow {
+  string id;
+  KleeLogType type = KleeLogType::UNKNOWN;
+
+  string line;
+  string scope;
+  string functionName;
+  string step;
+  string value;
+
+  std::string counterExampleHelper() {
+    std::ostringstream cnvt;
+    cnvt.str("");
+    cnvt << "Line: " << line << " :: ";
+    cnvt << "Function: " << functionName << " :: ";
+    cnvt << "Value: " << value;
+    return cnvt.str();
+  }
+
+  operator std::string() const {
+    std::ostringstream cnvt;
+    cnvt.str("");
+    const std::string function = generateWitnessFunctionName();
+    if (!function.empty()) {
+      cnvt << "  Call Function  : " << function << "()"
+           << "\n";
+    }
+    cnvt << "  Value          : " << this->value << "\n";
+    cnvt << "  Line Number    : " << this->line << "\n";
+    cnvt << "  Function Scope : " << this->functionName << "\n";
+
+    return cnvt.str();
+  }
+
+  /** The __VERIFIER_nondet_* function that produced the value, or "" for an
+   * UNKNOWN type. The unsigned family keeps the name it always had. */
+  std::string generateWitnessFunctionName() const {
+    switch (type) {
+      case KleeLogType::INTEGER:
+        return "__VERIFIER_nondet_int";
+      case KleeLogType::CHAR:
+        return "__VERIFIER_nondet_char";
+      case KleeLogType::POINTER:
+        return "__VERIFIER_nondet_pointer";
+      case KleeLogType::USHORT:
+        return "__VERIFIER_nondet_ushort";
+      case KleeLogType::LONG:
+        return "__VERIFIER_nondet_long";
+      case KleeLogType::UNSIGNED:
+      case KleeLogType::UINT:
+        return "__VERIFIER_nondet_uint";
+      case KleeLogType::ULONG:
+        return "__VERIFIER_nondet_ulong";
+      case KleeLogType::BOOL:
+        return "__VERIFIER_nondet_bool";
+      case KleeLogType::UCHAR:
+        return "__VERIFIER_nondet_uchar";
+      case KleeLogType::PCHAR:
+        return "__VERIFIER_nondet_pchar";
+      case KleeLogType::SIZE_T:
+        return "__VERIFIER_nondet_size_t";
+      case KleeLogType::LOFF_T:
+        return "__VERIFIER_nondet_loff_t";
+      case KleeLogType::SECTOR_T:
+        return "__VERIFIER_nondet_sector_t";
+      case KleeLogType::SHORT:
+        return "__VERIFIER_nondet_short";
+      case KleeLogType::DOUBLE:
+        return "__VERIFIER_nondet_double";
+      case KleeLogType::FLOAT:
+        return "__VERIFIER_nondet_float";
+      case KleeLogType::LONGLONG:
+        return "__VERIFIER_nondet_longlong";
+      case KleeLogType::ULONGLONG:
+        return "__VERIFIER_nondet_ulonglong";
+      case KleeLogType::U8:
+        return "__VERIFIER_nondet_u8";
+      case KleeLogType::U16:
+        return "__VERIFIER_nondet_u16";
+      case KleeLogType::U32:
+        return "__VERIFIER_nondet_u32";
+      case KleeLogType::MEMORY_BYTE:
+        return "__VERIFIER_nondet_memory";
+      case KleeLogType::UNKNOWN:
+        break;
+    }
+    return "";
+  }
+};
+
+/** Class used to get all KleeLogRow from a CSV file */
+class KleeLogHelper {
+ public:
+  /**
+   * Reads a CSV file and returns a vector of KleeLogRow
+   * @param path CSV file path
+   * @return     vector of KleeLogRow
+   */
+  static vector<KleeLogRow> getListLogFromCSV(string path);
+  /**
+   * Reads a CSV file (from default path) and returns a vector of KleeLogRow
+   * @return     vector of KleeLogRow
+   */
+  static vector<KleeLogRow> getListLogFromCSV() {
+    return KleeLogHelper::getListLogFromCSV(kleeLogCSV);
+  }
+};
+
+/** Struct used to represent all rows from list log CSV */
+struct ListLogRow {
+  string id;
+  string memoryAddress;
+  string pointsTo;
+  string scope;
+  string isFree;
+  string isDynamic;
+  string varName;
+  string lineNumber;
+  string functionName;
+  string step;
+
+  std::string counterExampleHelper() {
+    std::ostringstream cnvt;
+    cnvt.str("");
+    cnvt << varName << " = " << pointsTo << "; ";
+    // cnvt << "Function: " << functionName << " :: ";
+    cnvt << "Is Free: " << isFree << " :: ";
+    cnvt << "Is Dynamic: " << isDynamic;
+    return cnvt.str();
+  }
+
+  operator std::string() const {
+    std::ostringstream cnvt;
+    cnvt.str("");
+    cnvt << "  Address        : " << this->memoryAddress << "\n";
+    cnvt << "  PointsTo       : " << this->pointsTo << "\n";
+    cnvt << "  Is Free        : " << (this->isFree == "1" ? "TRUE" : "FALSE")
+         << "\n";
+    cnvt << "  Is Dynamic     : " << (this->isDynamic == "1" ? "TRUE" : "FALSE")
+         << "\n";
+    cnvt << "  Var Name       : " << this->varName << "\n";
+    cnvt << "  Line Number    : " << this->lineNumber << "\n";
+    cnvt << "  Function Scope : " << this->functionName << "\n";
+    return cnvt.str();
+  }
+};
+
+/** Class used to get all ListLogRow from a CSV file */
+class ListLogHelper {
+ public:
+  /**
+   * Reads a CSV file and returns a vector of ListLogRow
+   * @param path CSV file path
+   * @return     vector of ListLogRow
+   */
+  static vector<ListLogRow> getListLogFromCSV(string path);
+  /**
+   * Reads a CSV file (from default path) and returns a vector of ListLogRow
+   * @return     vector of ListLogRow
+   */
+  static vector<ListLogRow> getListLogFromCSV() {
+    return ListLogHelper::getListLogFromCSV(listLogCSV);
+  }
+};
+
+/** Struct used to represent all rows from state true automata log CSV */
+struct StateTrueLogRow {
+  string functionName;
+  string numLineBeginBB;
+  string numLineStart;
+  string sourceCode;
+  string controlCode;
+  string hasControlCode;
+  string numLineControlTrue;
+  string numLineControlFalse;
+  string isEntryPoint;
+  string isErrorLabel;
+};
+
+/** Class used to get all StateTrueLogRow from a CSV file */
+class StateTrueLogHelper {
+ public:
+  /**
+   * Reads a CSV file and returns a vector of StateTrueLogRow
+   * @param path CSV file path
+   * @return     vector of StateTrueLogRow
+   */
+  static vector<StateTrueLogRow> getListLogFromCSV(string path);
+  /**
+   * Reads a CSV file (from default path) and returns a vector of
+   * StateTrueLogRow
+   * @return     vector of StateTrueLogRow
+   */
+  static vector<StateTrueLogRow> getListLogFromCSV() {
+    return StateTrueLogHelper::getListLogFromCSV(stateTrueLogCSV);
+  }
+};
+
+/** Struct used to represent all rows from track_bb_log.st for true automata log
+ * CSV */
+struct TrackBBLogRow {
+  string numLineInBB;
+  string functionName;
+};
+
+/** Class used to get all TrackBBLogRow from a CSV file */
+class TrackBBLogHelper {
+ public:
+  /**
+   * Reads a CSV file and returns a vector of TrackBBLogRow
+   * @param path CSV file path
+   * @return     vector of TrackBBLogRow
+   */
+  static vector<TrackBBLogRow> getListLogFromCSV(string path);
+  /**
+   * Reads a CSV file (from default path) and returns a vector of TrackBBLogRow
+   * @return     vector of TrackBBLogRow
+   */
+  static vector<TrackBBLogRow> getListLogFromCSV() {
+    return TrackBBLogHelper::getListLogFromCSV(trackBBLogCSV);
+  }
+};
+
+}  // namespace Map2Check
+
+#endif  // MODULES_FRONTEND_UTILS_TOOLS_HPP_

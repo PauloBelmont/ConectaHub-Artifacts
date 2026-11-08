@@ -1,0 +1,25 @@
+% Parte do material do minicurso "Escrita de Artigos Científicos com LaTeX" (Conecta Hub)
+% Exemplo 01 – Estrutura básica de um documento LaTeX
+% Compile com: pdflatex main.tex
+
+\documentclass[12pt, a4paper]{article}   % classe do documento e tamanho da fonte/página
+
+\usepackage[utf8]{inputenc}              % permite acentos direto no texto
+\usepackage[T1]{fontenc}                 % fontes com acentos corretos
+\usepackage[brazil]{babel}               % idioma português (títulos, datas etc.)
+
+\title{Meu Primeiro Documento}
+\author{Seu Nome}
+\date{\today}
+
+\begin{document}
+
+\maketitle                               % imprime título, autor e data
+
+Este é um parágrafo simples. Basta escrever o texto normalmente.
+
+Uma linha em branco separa um parágrafo do próximo.
+
+Este texto é um parágrafo novo, com espaçamento automático.
+
+\end{document}

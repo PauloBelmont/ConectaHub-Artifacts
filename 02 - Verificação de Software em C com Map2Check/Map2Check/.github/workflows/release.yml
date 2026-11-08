@@ -1,0 +1,59 @@
+############################################################
+# Map2Check Release — Draft Release automático no master
+#
+# Build completo (KLEE 3.1 + AFL++) dentro da imagem
+# ghcr.io/hbgit/map2check-dev, empacota release/ em .zip e
+# publica Draft Release via semantic-release.
+############################################################
+name: Release
+
+on:
+  push:
+    branches: [master]
+
+permissions:
+  contents: write   # criar tag + draft release
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build & Draft Release
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout (full history + submodules)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0          # semantic-release precisa de todas as tags/commits
+          submodules: recursive
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
+          sudo docker image prune -a -f || true
+
+      - name: Pull map2check-dev image
+        run: docker pull ghcr.io/hbgit/map2check-dev:latest
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install semantic-release
+        run: npm install --no-save semantic-release@24 @semantic-release/exec@6
+
+      # Lê os commits desde a última tag v*, calcula a versão e, se houver
+      # release a fazer, roda scripts/prepare-release.sh <versão> (fase
+      # prepare, via .releaserc.json): build Docker completo com a versão
+      # injetada em -DMAP2CHECK_VERSION + empacotamento do zip. Por fim cria
+      # a tag e publica o Draft Release com o .zip anexado. Sem release
+      # necessária (só docs:/ci:/chore:), o build nem executa.
+      - name: Run semantic-release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npx semantic-release
